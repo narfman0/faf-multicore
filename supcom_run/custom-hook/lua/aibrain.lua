@@ -145,13 +145,36 @@ AIBrain = Class(_oldAIBrain) {
 local SAVE_TICK = 18000
 local FAF_SAVE_NAME = "seton4v4-30min"
 
+-- Count live units across all brains (total sim unit load). C call per brain; run
+-- it every few beats, not every tick.
+function FafTotalUnits()
+    local total = 0
+    for bi = 1, table.getn(ArmyBrains) do
+        local ok, u = pcall(function()
+            return ArmyBrains[bi]:GetListOfUnits(categories.ALLUNITS, false)
+        end)
+        if ok and u then total = total + table.getn(u) end
+    end
+    return total
+end
+
 function FafBeatLogger()
     local ticks = 0
+    local unitsLogged = false
     while true do
-        WaitTicks(100)
-        ticks = ticks + 100
+        WaitTicks(20)            -- finer cadence so short windows are measurable
+        ticks = ticks + 20
         local okT, gt = pcall(GetGameTimeSeconds)
-        LOG(string.format("FAF_BEAT: ticks=%d gt=%s", ticks, tostring(okT and gt or "n/a")))
+        -- rt = real wall-seconds (profiling-only engine clock); Δrt/Δticks = ms/tick.
+        local okR, rt = pcall(GetSystemTimeSecondsOnlyForProfileUse)
+        LOG(string.format("FAF_BEAT: ticks=%d gt=%s rt=%s units=%d", ticks,
+            tostring(okT and gt or "n/a"), tostring(okR and rt or "n/a"), FafTotalUnits()))
+        -- Log total unit count on the first iteration (so a reloaded snapshot
+        -- reports immediately) and every 500 ticks thereafter.
+        if not unitsLogged or math.mod(ticks, 500) == 0 then
+            unitsLogged = true
+            LOG("FAF_UNITS: ticks=" .. ticks .. " total_units=" .. FafTotalUnits())
+        end
         if ticks >= SAVE_TICK then
             Sync.FafSaveRequest = FAF_SAVE_NAME
             if ticks == SAVE_TICK then
@@ -161,8 +184,136 @@ function FafBeatLogger()
     end
 end
 
+-- Air-stress harness: spawn a controllable air battle to profile the sim at high
+-- unit counts (the 2k-5k endgame regime). OFF by default. Spawns SPAWN_N T1
+-- interceptors split between two opposing armies, overlapping near map center so
+-- their AA weapons engage immediately (exercises collision/projectile/aim/motion).
+-- CreateUnitHPR bypasses the unit cap. Spawn is batched to avoid a one-tick hitch.
+local SPAWN_AIR = false      -- flip true for air-stress profiling runs
+local SPAWN_N = 1000          -- total; SPAWN_N/2 per brain
+local SPAWN_BP = "uea0102"    -- UEF T1 interceptor (cheap, numerous)
+-- "opposing": group2 = enemy team (they fight). "allied": group2 = a friendly
+-- team-1 brain (no combat). Both put SPAWN_N/2 units on each of two M28 brains, so
+-- M28's management cost matches and ms/tick(opposing)-ms/tick(allied) = combat cost.
+local SPAWN_MODE = "opposing"  -- opposing|allied|neutral
+FafAirSpawned = false         -- global (pre-declared so reads don't hit strict-global)
+
+function FafSpawnAirBattle()
+    for i = 1, 600 do
+        if ArmyBrains and table.getn(ArmyBrains) >= 2 then break end
+        WaitTicks(1)
+    end
+    local nb = table.getn(ArmyBrains)
+    if nb < 2 then LOG("FAF_AIRSPAWN: <2 brains, abort"); return end
+    local a1, a2
+    if SPAWN_MODE == "neutral" then
+        -- find a non-M28 (civilian) army so the units exist but M28 doesn't manage
+        -- them — isolates raw engine per-unit cost from M28 AI cost.
+        local aN
+        for bi = 1, nb do
+            local ai = ArmyBrains[bi]:GetArmyIndex()
+            local okc, civ = pcall(ArmyIsCivilian, ai)
+            LOG("FAF_ARMY: idx=" .. ai .. " civilian=" .. tostring(okc and civ) ..
+                " m28=" .. tostring(ArmyBrains[bi].M28AI))
+            if okc and civ then aN = ai end
+        end
+        if not aN then LOG("FAF_AIRSPAWN: no civilian army found, abort neutral"); return end
+        a1 = aN; a2 = aN
+    elseif SPAWN_MODE == "allied" then
+        a1 = ArmyBrains[1]:GetArmyIndex(); a2 = ArmyBrains[2]:GetArmyIndex()
+    else  -- opposing
+        a1 = ArmyBrains[1]:GetArmyIndex(); a2 = ArmyBrains[nb]:GetArmyIndex()
+    end
+    WaitTicks(40)                      -- let the session settle
+    local half = math.floor(SPAWN_N / 2)
+    local cols, sp, cx, cz = 45, 3, 512, 512
+    local made = 0
+    for k = 0, half - 1 do
+        local ox = math.mod(k, cols) * sp
+        local oz = math.floor(k / cols) * sp
+        local x, z = cx - 67 + ox, cz - 67 + oz
+        pcall(function() CreateUnitHPR(SPAWN_BP, a1, x,     GetTerrainHeight(x, z),     z,     0, 0, 0) end)
+        pcall(function() CreateUnitHPR(SPAWN_BP, a2, x + 1, GetTerrainHeight(x + 1, z), z + 1, 0, 0, 0) end)
+        made = made + 2
+        if math.mod(k, 100) == 99 then WaitTicks(1) end   -- spread the spawn cost
+    end
+    LOG("FAF_AIRSPAWN: mode=" .. SPAWN_MODE .. " spawned " .. made .. " units (" ..
+        SPAWN_BP .. ") armies " .. a1 .. " + " .. a2)
+    FafAirSpawned = true
+end
+
+-- Self-contained call-count profiler. FAF's lua/sim/Profiler.lua is a community
+-- patch not present in our retail+m28ai VFS, so we install debug.sethook ("c" =
+-- on every Lua function call) ourselves over a fixed tick window, then log the top
+-- callers directly. The aim: see which engine->Lua callbacks (OnCollisionCheck/
+-- OnImpact/OnKilled) multiply during air spam. NOTE: Lua 5.0 sethook may be
+-- per-coroutine; the dump's contents tell us if it catches engine callbacks or
+-- only this thread (if the latter, we wrap the methods instead).
+function FafEnableProfiler()
+    for i = 1, 1200 do
+        if FafAirSpawned then break end
+        WaitTicks(1)
+    end
+    WaitTicks(20)   -- let the battle reach steady combat
+    local okd, dbg = pcall(function() return debug end)   -- strict-global safe
+    if not (okd and dbg and dbg.sethook and dbg.getinfo) then
+        LOG("FAF_PROF: debug.sethook unavailable in sim sandbox (okd=" .. tostring(okd) .. ")")
+        return
+    end
+    local getinfo = dbg.getinfo
+    local counts = {}
+    local hook = function()
+        local info = getinfo(2, "Sn")
+        if info then
+            local k = (info.short_src or "?") .. "|" .. (info.name or info.what or "?")
+            counts[k] = (counts[k] or 0) + 1
+        end
+    end
+    LOG("FAF_PROF: installing sethook for 40 ticks")
+    dbg.sethook(hook, "c")
+    WaitTicks(40)
+    dbg.sethook()
+    local arr = {}
+    for k, v in counts do table.insert(arr, {k, v}) end
+    table.sort(arr, function(a, b) return a[2] > b[2] end)
+    LOG("FAF_PROF: top Lua call-counts over 40 ticks (" .. table.getn(arr) .. " distinct):")
+    for i = 1, math.min(45, table.getn(arr)) do
+        LOG(string.format("FAF_PROF: %10d  %s", arr[i][2], arr[i][1]))
+    end
+    LOG("FAF_PROF: end")
+end
+
 -- Trigger C (primary): at import the sim is already live and ArmyBrains is
 -- populated, so the session-start triggers have already fired. Kick the test
 -- thread directly. FafWorkerOffloadTest polls ArmyBrains and waits for warmup.
 ForkThread(function() FafWorkerMaybeStart("chunk-end") end)
 ForkThread(FafBeatLogger)
+-- Force-start M28's wall-time profiler output thread (its own OnCreateBrain fork
+-- doesn't fire in this headless setup). Confirms the config flag, then forks
+-- ProfilerActualTimePerTick (idempotent via M28's bActiveProfiler guard).
+function FafStartM28Profiler()
+    for i = 1, 1200 do
+        if FafAirSpawned then break end
+        WaitTicks(1)
+    end
+    WaitTicks(20)
+    local okC, cfg = pcall(import, '/mods/M28AI/lua/M28Config.lua')
+    local okP, prof = pcall(import, '/mods/M28AI/lua/AI/M28Profiler.lua')
+    LOG("FAF_M28PROF: cfg_ok=" .. tostring(okC) .. " RunProfiling=" ..
+        tostring(okC and cfg and cfg.M28RunProfiling) .. " prof_ok=" .. tostring(okP) ..
+        " prof_err=" .. tostring(not okP and prof or "-"))
+    if okC and cfg and cfg.M28RunProfiling and okP and prof and prof.ProfilerActualTimePerTick then
+        ForkThread(prof.ProfilerActualTimePerTick)
+        LOG("FAF_M28PROF: forked ProfilerActualTimePerTick")
+    else
+        LOG("FAF_M28PROF: not started")
+    end
+end
+
+local PROFILE_SELFHOOK = false   -- our debug.sethook profiler
+local PROFILE_M28 = false        -- M28's wall-time profiler (output thread won't run headless)
+if SPAWN_AIR then
+    ForkThread(FafSpawnAirBattle)
+    if PROFILE_SELFHOOK then ForkThread(FafEnableProfiler) end
+    if PROFILE_M28 then ForkThread(FafStartM28Profiler) end
+end
