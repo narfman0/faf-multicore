@@ -3,16 +3,20 @@
 Shared, version-controlled inputs for the perf harness so tests are reproducible
 across machines without re-simulating.
 
-## `seton4v4-30min.SCFAsave` (~50 MB)
+## `seton4v4-30min.SCFAsave` (~198 MB)
 
-A headless Supreme Commander: Forged Alliance save of a **4v4 M28AI skirmish on
-SCMP_009 Seton's Clutch**, captured at **sim tick 18300 (~30 game-minutes)** on
-2026-06-30. This is the heavy late-game state used for the realized-gain A/B
-(`faf-analysis/perf-results.md`, Phase 2) — load it instead of paying ~30 min of
-re-simulation per run.
+A headless save of a **4v4 M28AI skirmish on SCMP_009 Seton's Clutch**, captured at
+**sim tick 18000 (30 game-minutes)** on 2026-06-30, under the **real FAF environment**
+(`headless-faf-setup.md`) — i.e. M28 is **actually playing**: ~2257 units (developed
+economy + armies), not idle ACUs.
 
-**Validated:** reloads cleanly and M28AI resumes (119k GTA calls + advancing beats
-after load, no serialization errors).
+> **Replaces the earlier ~50 MB capture**, which was invalid — M28 never ran in the
+> old retail-gamedata setup (8 idle ACUs all game). See `faf-analysis/headless-faf-setup.md`.
+
+**Requires the FAF environment to reload** (FAForever `.nx2` gamedata + matching
+`ForgedAlliance_faf.exe`); a retail-gamedata launch can't load it. Captured at ~1×
+sim speed (this box sustains ~2200 *spread* units near real-time; the slowdown is
+combat density, not unit count).
 
 ### How to use
 
