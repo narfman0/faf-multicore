@@ -10,9 +10,14 @@ operational handoff.
 - **Correctness: DONE.** Worker output == engine synchronous `GetThreatAtPosition`
   exactly. Validated 1v1 (100%) and 4v4 Seton's Clutch (24/24 positions, for
   brains on **both teams** — full per-brain correctness).
-- **Not yet done:** wiring M28AI to actually consume offloaded results; measuring
-  the real perf gain; ring>0 queries; threat types other than 'Overall';
-  determinism audit for replay/multiplayer safety.
+- **Perf ceiling: MEASURED** (`faf-analysis/perf-results.md`). On 4v4 Seton's,
+  GTA('Overall', ring 0) is **~0.05% of the sim-tick budget, flat from 5 to 30
+  game-min**, and the sim **never went CPU-bound** (steady 10 ticks/s). On this
+  hardware the offload buys no throughput; it only matters where the sim is CPU-bound
+  (weaker box / heavier-than-4v4). A 30-game-min snapshot is saved for cheap retest.
+- **Not yet done:** wiring M28AI to actually consume offloaded results; ring>0
+  queries; threat types other than 'Overall'; determinism audit for
+  replay/multiplayer safety.
 
 ## The win, in one paragraph
 
@@ -79,9 +84,16 @@ start, offloads ACU + grid positions **from multiple brains**, and logs
 
 ## Open items / suggested next steps
 
-1. **Measure the perf gain.** Use `faf_profiler.dll` (times GTA calls) to get the
-   synchronous baseline (per-call µs × calls/tick), then compare with offload on.
-   Quantify the sim-tick budget freed. This is the "is it worth shipping?" number.
+1. **Measure the perf gain — DONE for the ceiling (`faf-analysis/perf-results.md`).**
+   Result: ~0.05% of the sim-tick budget on 4v4 Seton's, flat to 30 game-min, sim
+   never CPU-bound → no throughput to reclaim on this hardware. Tools:
+   `MAP=SCMP_009 bash faf-shim/run_skirmish_profiler.sh <sec>` prints a
+   `=== Ceiling metrics ===` block (GTA µs/tick, ms/beat, % of tick). The realized
+   A/B `SNAPSHOT=fixtures/seton4v4-30min.SCFAsave EXE=base|worker bash faf-shim/bench_throughput.sh`
+   loads the 30-min snapshot and compares beats/sec — but it's only meaningful once
+   step 2 lands AND on a CPU-bound baseline (ms/beat > 100), which this box is not.
+   **Open follow-up:** rerun the ceiling on weaker hardware / heavier-than-4v4 (load
+   the snapshot) to find a regime where ms/beat > 100 and the offload could pay off.
 2. **Wire M28AI to consume offloaded results** (the determinism-sensitive step).
    Replace hot synchronous GTA loops in M28 with `FAF_OffloadThreatMap` + a
    next-tick `FAF_PollResult`, with synchronous fallback when poll returns nil.

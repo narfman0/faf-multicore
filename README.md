@@ -5,18 +5,23 @@ AI threat-map queries (`GetThreatAtPosition`) onto dedicated OS worker threads, 
 they run concurrently with the single-threaded sim. Plus the reverse-engineering
 notes and headless test harness used to build and validate it.
 
-Status (2026-06-29): **the threat offload works and is correctness-validated** —
+Status (2026-06-30): **the threat offload works and is correctness-validated** —
 worker results match the engine's synchronous `GetThreatAtPosition` exactly, in 1v1
-**and** 4v4 (24/24 positions across both teams). Not yet wired into M28AI's decision
-loop for a real perf measurement.
+**and** 4v4 (24/24 positions across both teams). **Perf ceiling now measured**
+(`faf-analysis/perf-results.md`): on 4v4 Seton's, GTA is only ~0.05% of the sim-tick
+budget and the sim never goes CPU-bound (steady 10 ticks/s through 30 game-min), so
+the offload buys no throughput on this hardware — it would only help a CPU-bound sim
+(weaker box / heavier-than-4v4). Still not wired into M28AI's decision loop.
 
 ## What this does (and what it doesn't)
 
 `GetThreatAtPosition` (GTA) is an **AI-brain** function — M28AI and other AI
 personalities call it constantly to assess threat. Human players never call it.
 
-- ✅ **Helps AI games** (skirmish / co-op / AI-heavy sessions): GTA can be a large
-  share of the AI sim-tick budget, and moving it off the sim thread frees the sim.
+- ⚠️ **Could help a CPU-bound AI sim**: moving GTA off the sim thread frees sim-tick
+  budget — *if* GTA is a meaningful share of it and the sim is actually CPU-bound.
+  Measured on 4v4 Seton's it is neither (~0.05%, sim not CPU-bound); see
+  `faf-analysis/perf-results.md`. The win case is weaker hardware / heavier states.
 - ❌ **Does NOT help human PvP** (e.g. intense air battles). PvP lag is the **sim
   thread itself** — unit movement, weapons, collision, pathfinding — which runs in
   deterministic lockstep for replays/multiplayer and is not touched here. GTA isn't

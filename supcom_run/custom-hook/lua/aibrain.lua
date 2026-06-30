@@ -132,7 +132,37 @@ AIBrain = Class(_oldAIBrain) {
     end,
 }
 
+-- Beat/tick logger: counts sim ticks elapsed so the profiler / throughput runners
+-- can compute GTA's share of the sim-tick budget (calls/tick, % of tick) and
+-- beats/sec. Independent of the offload API, so it also works under the profiler
+-- build (no FAF_OffloadThreatMap there). The engine logs no beat markers by
+-- default; this is the tick source the runners grep ("FAF_BEAT: ticks=N").
+-- Mid-game save: the save API (InternalSaveGame) is UI-side only, so the sim can
+-- only REQUEST a save via the Sync table (the sanctioned sim->UI channel). At
+-- SAVE_TICK we set Sync.FafSaveRequest = <path> every beat (idempotent; the UI
+-- gamemain hook acts once). SAVE_TICK = 18000 ticks = 30 game-min (10 ticks/s);
+-- use a small value (e.g. 200 ≈ 20 game-sec) to re-validate the mechanism.
+local SAVE_TICK = 18000
+local FAF_SAVE_NAME = "seton4v4-30min"
+
+function FafBeatLogger()
+    local ticks = 0
+    while true do
+        WaitTicks(100)
+        ticks = ticks + 100
+        local okT, gt = pcall(GetGameTimeSeconds)
+        LOG(string.format("FAF_BEAT: ticks=%d gt=%s", ticks, tostring(okT and gt or "n/a")))
+        if ticks >= SAVE_TICK then
+            Sync.FafSaveRequest = FAF_SAVE_NAME
+            if ticks == SAVE_TICK then
+                LOG("FAF_SAVE(sim): requested save at tick " .. ticks .. " name=" .. FAF_SAVE_NAME)
+            end
+        end
+    end
+end
+
 -- Trigger C (primary): at import the sim is already live and ArmyBrains is
 -- populated, so the session-start triggers have already fired. Kick the test
 -- thread directly. FafWorkerOffloadTest polls ArmyBrains and waits for warmup.
 ForkThread(function() FafWorkerMaybeStart("chunk-end") end)
+ForkThread(FafBeatLogger)

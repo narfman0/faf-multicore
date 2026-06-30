@@ -3,6 +3,20 @@
 -- just needs to redefine the functions it wants to patch.
 
 function StartCommandLineSession(mapName, _isPerfTest)
+    -- Reload branch: /loadsave <winpath> resumes a saved session (state captured
+    -- mid-game by the UserSync hook) instead of starting a fresh skirmish. The
+    -- /map arg is still required to make the engine call this function; it is
+    -- ignored here. LoadSavedGame is a front-end engine global (see saveload.lua).
+    local loadArg = GetCommandLineArg("/loadsave", 1)
+    if loadArg and loadArg[1] then
+        local path = loadArg[1]
+        LOG("FAF_LOAD: StartCommandLineSession -> LoadSavedGame path=" .. path)
+        local ok, worked, err, detail = pcall(LoadSavedGame, path)
+        LOG("FAF_LOAD: ok=" .. tostring(ok) .. " worked=" .. tostring(worked) ..
+            " err=" .. tostring(err) .. " detail=" .. tostring(detail))
+        return
+    end
+
     mapName = FixupMapName(mapName)
 
     local scenario = import("/lua/ui/maputil.lua").LoadScenario(mapName)
