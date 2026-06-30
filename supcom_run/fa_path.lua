@@ -1,0 +1,5 @@
+fa_path = 'Z:\\home\\narfman0\\.openclaw\\workspace\\faf\\supcom_steam\\Supreme Commander Forged Alliance'
+custom_vault_path = 'Z:\\home\\narfman0\\.openclaw\\workspace\\faf\\supcom_run\\vault'
+ClientVersion = 'headless-test'
+GameVersion   = '3836'
+GameType      = 'faf'

@@ -1,0 +1,35 @@
+# ── Game binaries / copyrighted assets — NEVER commit (supply your own) ──
+*.exe
+*.dll
+*.fafreplay
+MohoEngine.dll
+
+# Steam game install + runnable trees (mostly symlinks to it)
+/supcom_steam/
+/game/
+/supcom_run/bin/
+/supcom_run/DirectX
+/supcom_run/fonts
+/supcom_run/gamedata
+/supcom_run/maps
+/supcom_run/movies
+/supcom_run/sounds
+/supcom_run/vault/
+
+# Upstream FAForever repos (their own git remotes)
+/faf-fa/
+/M28AI/
+/grimoire/
+/faf-fa-patches/
+
+# Ghidra project DB, logs, scratch
+/ghidra-project/
+/supcom-logs/
+*.log
+*.bin
+
+# OS / editor
+.DS_Store
+
+# Claude session/config
+/.claude/
