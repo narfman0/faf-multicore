@@ -1,21 +1,28 @@
 diff --git a/init_faf.lua b/init_faf.lua
-index 8ad09ae..db9ab7c 100644
+index 8ad09ae..6bc3fd4 100644
 --- a/init_faf.lua
 +++ b/init_faf.lua
-@@ -649,6 +649,16 @@ end
- MountAllowedContent(InitFileDir .. '/../gamedata/', '*.nx2', allowedAssetsNxy)
- MountAllowedContent(fa_path .. '/gamedata/', '*.scd', allowedAssetsScd)
+@@ -645,9 +645,21 @@ else
+     LoadVaultContent(SHGetFolderPath('PERSONAL') .. 'My Games/Gas Powered Games/Supreme Commander Forged Alliance')
+ end
  
-+-- Headless: NX2 files not present; mount base Lua and schook from Steam gamedata SCDs
+--- load in .nxt / .nx2 / .scd files that we allow
+-MountAllowedContent(InitFileDir .. '/../gamedata/', '*.nx2', allowedAssetsNxy)
++-- load in .nxt / .nx2 / .scd files that we allow.
++-- FAF gamedata: the real FAF .nx2 archives (lua.nx2 = FAF framework with table.combine
++-- + aibrains/index keyToBrain + FAF simInit; env.nx2 = FAF-normalized props; etc.) from
++-- the FAForever client install. Mounted FIRST (highest priority) so they override the
++-- base retail .scd. This is the self-consistent FAF environment M28AI requires.
++MountAllowedContent(InitFileDir .. '/../../FAForever/gamedata/', '*.nx2', allowedAssetsNxy)
+ MountAllowedContent(fa_path .. '/gamedata/', '*.scd', allowedAssetsScd)
++-- base engine lua (the FAF .nx2 above override the lua framework parts)
 +MountDirectory(fa_path .. '/gamedata/mohodata.scd', '/')
 +MountDirectory(fa_path .. '/gamedata/moholua.scd', '/')
-+-- FAF-patched SinglePlayerLaunch (math.mod compatible) must come before lua.scd
 +MountDirectory(InitFileDir .. '/../custom-lua', '/')
 +MountDirectory(fa_path .. '/gamedata/lua.scd', '/')
-+-- Custom hook overrides (mounted before schook.scd so our files take priority)
++-- Custom hook overrides (our harness) before schook.scd
 +MountDirectory(InitFileDir .. '/../custom-hook', '/schook')
 +MountDirectory(fa_path .. '/gamedata/schook.scd', '/')
-+
+ 
  -- get direct access to preferences file, letting us have much more control over its content. This also includes cache and similar
  MountDirectory(SHGetFolderPath('LOCAL_APPDATA') .. 'Gas Powered Games/Supreme Commander Forged Alliance', '/preferences')
- 

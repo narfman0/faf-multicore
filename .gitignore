@@ -33,3 +33,7 @@ MohoEngine.dll
 
 # Claude session/config
 /.claude/
+
+# FAForever client install + game zips (copyrighted, multi-GB — supply your own)
+*.zip
+/FAForever/

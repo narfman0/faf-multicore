@@ -4,6 +4,13 @@
 -- NOTE: the FA sim sandbox does NOT expose _G — use direct global access only.
 
 LOG("FAF_WORKER_TEST: aibrain hook chunk executing")
+-- Stub CollectCurrentScores: FAF simInit's BeginSession calls this engine fn, which
+-- our exe build lacks ("nonexistent global"), failing BeginSession. Define a no-op
+-- (guarded read for the strict sandbox) so BeginSession completes and the AI starts.
+do
+    local okCCS = pcall(function() return CollectCurrentScores end)
+    if not okCCS then CollectCurrentScores = function() return {} end end
+end
 LOG("FAF_WORKER_TEST: probe ForkThread=" .. tostring(ForkThread) ..
     " BeginSession=" .. tostring(BeginSession) ..
     " ArmyBrains=" .. tostring(ArmyBrains))
@@ -310,8 +317,75 @@ function FafStartM28Profiler()
     end
 end
 
+-- Time CanBuildStructureAt (M28's hot engine leaf / offload candidate) via a
+-- debug.sethook call/return bracket, sampled in short windows as the game develops.
+-- Reports per-call us, calls/tick, % of a 100ms tick, plus a realism trajectory
+-- (unit count + delta = building vs losing units to combat).
+function FafTimeCBSA()
+    local okd, dbg = pcall(function() return debug end)
+    if not (okd and dbg and dbg.sethook and dbg.getinfo) then
+        LOG("FAF_CBSA: debug.sethook unavailable"); return
+    end
+    local getinfo = dbg.getinfo
+    local prevUnits = 0
+    while true do
+        WaitTicks(1800)                      -- every ~3 game-min
+        local startT, total, count = nil, 0, 0
+        local hook = function(event)
+            local info = getinfo(2, "n")
+            if info and info.name == "CanBuildStructureAt" then
+                if event == "call" then
+                    startT = GetSystemTimeSecondsOnlyForProfileUse()
+                elseif event == "return" and startT then
+                    total = total + (GetSystemTimeSecondsOnlyForProfileUse() - startT)
+                    count = count + 1; startT = nil
+                end
+            end
+        end
+        dbg.sethook(hook, "cr")
+        WaitTicks(40)                         -- measurement window (game-ticks)
+        dbg.sethook()
+        local okg, gt = pcall(GetGameTimeSeconds)
+        local units = FafTotalUnits()
+        local avg_us = (count > 0) and (total / count * 1e6) or 0
+        local cpt = count / 40
+        LOG(string.format("FAF_CBSA: gt=%s units=%d d_units=%d calls=%d calls/tick=%.1f avg_us=%.2f pct_of_tick=%.3f",
+            tostring(okg and gt or "?"), units, units - prevUnits, count, cpt, avg_us,
+            (cpt * avg_us) / 100000 * 100))
+        prevUnits = units
+    end
+end
+
 local PROFILE_SELFHOOK = false   -- our debug.sethook profiler
 local PROFILE_M28 = false        -- M28's wall-time profiler (output thread won't run headless)
+local PROFILE_CBSA = false       -- time CanBuildStructureAt as the game develops
+-- Diagnose why M28 doesn't activate: per brain, log the name, the personality
+-- ScenarioInfo.ArmySetup reports, the M28AI flag, and IsM28AIPersonality's verdict.
+function FafM28Diag()
+    for i = 1, 600 do
+        if ArmyBrains and table.getn(ArmyBrains) > 0 then break end
+        WaitTicks(1)
+    end
+    WaitTicks(30)
+    local okMC, MC = pcall(function() return import('/mods/M28AI/lua/AI/M28Conditions.lua') end)
+    local okK, k = pcall(function() return import('/lua/aibrains/index.lua').keyToBrain['m28ai'] end)
+    LOG("FAF_M28DIAG: M28Conditions import ok=" .. tostring(okMC) ..
+        " ScenarioInfo=" .. tostring(ScenarioInfo ~= nil) ..
+        " keyToBrain['m28ai']=" .. tostring(okK and k))
+    for bi = 1, table.getn(ArmyBrains) do
+        local b = ArmyBrains[bi]
+        local nm = b.Name
+        local okP, per = pcall(function() return ScenarioInfo.ArmySetup[nm].AIPersonality end)
+        local okIs, isM28 = pcall(function() return okMC and MC.IsM28AIPersonality(b) end)
+        LOG(string.format("FAF_M28DIAG: idx=%s name=%s nickname=%s personality=%s M28AI=%s IsM28=%s",
+            tostring(b:GetArmyIndex()), tostring(nm), tostring(b.Nickname),
+            tostring(okP and per or "<"..tostring(per)..">"),
+            tostring(b.M28AI), tostring(okIs and isM28 or "err:"..tostring(isM28))))
+    end
+end
+ForkThread(FafM28Diag)
+
+if PROFILE_CBSA then ForkThread(FafTimeCBSA) end
 if SPAWN_AIR then
     ForkThread(FafSpawnAirBattle)
     if PROFILE_SELFHOOK then ForkThread(FafEnableProfiler) end

@@ -1,3 +1,8 @@
+> **CAVEAT (2026-06-30):** results below predate the discovery that **M28 never
+> actually played** in the old setup (8 idle ACUs) — see `headless-faf-setup.md`.
+> Methods/tooling are sound; M28-behaviour conclusions need redoing on the now-working
+> FAF env. Spawn-harness (real spawned units) results still hold.
+
 # Performance results — threat offload
 
 Quantifies HANDOFF.md "Open items" #1. **Phased:** Phase 1 measures the *ceiling*
