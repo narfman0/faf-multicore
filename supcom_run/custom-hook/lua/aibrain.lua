@@ -149,8 +149,8 @@ AIBrain = Class(_oldAIBrain) {
 -- SAVE_TICK we set Sync.FafSaveRequest = <path> every beat (idempotent; the UI
 -- gamemain hook acts once). SAVE_TICK = 18000 ticks = 30 game-min (10 ticks/s);
 -- use a small value (e.g. 200 ≈ 20 game-sec) to re-validate the mechanism.
-local SAVE_TICK = 18000
-local FAF_SAVE_NAME = "seton4v4-30min"
+local SAVE_TICK = 27000
+local FAF_SAVE_NAME = "seton4v4-45min-clean"
 
 -- Count live units across all brains (total sim unit load). C call per brain; run
 -- it every few beats, not every tick.

@@ -19,6 +19,18 @@ local fafIsLoad = (okLoad and fafLoadArg and fafLoadArg[1]) and true or false
 LOG("FAF_SAVE(UI): isLoad=" .. tostring(fafIsLoad) .. " (save " ..
     (fafIsLoad and "DISABLED" or "armed") .. ")")
 
+-- Reload-continue save: load a snapshot, run it forward, and save ONCE after N
+-- more beats under a NEW name. /savecontinue <name> <afterBeats>. The sim code in
+-- a reload is frozen (so SAVE_TICK/name are baked into the save), but this UI hook
+-- runs fresh on load, so it drives the extra save from here. Used to grow the
+-- 45-min snapshot into a denser late-game (reload -> run to 75-min -> save bigger
+-- fixture) that actually pushes the sim CPU-bound (negative game speed).
+local okCont, fafContArg = pcall(GetCommandLineArg, "/savecontinue", 2)
+local fafContName  = (okCont and fafContArg and fafContArg[1]) or nil
+local fafContBeats = (okCont and fafContArg and fafContArg[2]) and tonumber(fafContArg[2]) or nil
+LOG("FAF_SAVE(UI): savecontinue name=" .. tostring(fafContName) ..
+    " afterBeats=" .. tostring(fafContBeats))
+
 local fafBase = OnSync
 local fafFired = false
 local fafUnitsLogged = false
@@ -58,6 +70,21 @@ OnSync = function()
     local req = rawget(Sync, "FafSaveRequest")
     if math.mod(fafBeats, 100) == 0 then
         LOG("FAF_SAVE(UI): OnSync alive beats=" .. fafBeats .. " req=" .. tostring(req))
+    end
+    -- Reload-continue: fire one save after the requested number of extra beats,
+    -- independent of the frozen sim's save request (which is disabled by fafIsLoad).
+    if fafContName and fafContBeats and not fafFired and fafBeats >= fafContBeats then
+        fafFired = true
+        local path = "Z:\\home\\narfman0\\.openclaw\\workspace\\faf\\fixtures\\" ..
+            tostring(fafContName) .. ".SCFAsave"
+        LOG("FAF_SAVE(UI): savecontinue firing at beats=" .. fafBeats .. " path=" .. path)
+        local okC, errC = pcall(function()
+            InternalSaveGame(path, tostring(fafContName), function(worked, errmsg)
+                LOG("FAF_SAVE(UI): oncompletion worked=" .. tostring(worked) ..
+                    " err=" .. tostring(errmsg))
+            end)
+        end)
+        LOG("FAF_SAVE(UI): savecontinue call ok=" .. tostring(okC) .. " err=" .. tostring(errC))
     end
     if req and not fafFired and not fafIsLoad then
         fafFired = true

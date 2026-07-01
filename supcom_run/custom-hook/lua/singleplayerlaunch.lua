@@ -79,6 +79,15 @@ function StartCommandLineSession(mapName, _isPerfTest)
         TeamShareOverflow = 'enabled',
         Ratings = {},   -- M28 writes Options.Ratings[nickname]; nil here -> m28chat error
         Score = 'no',
+        -- M28 micro-throttle options. M28Overseer reads these as (opt or 1) and
+        -- SKIPS initialising aiBrain[refiMaxUnitsToDodgeMicroAtOnce]/refiCurUnitsDodging
+        -- when they resolve to 1; but M28Micro.DodgeShot/AltDodgeShot read them as
+        -- (opt == 1) WITHOUT the nil default, so a nil option makes them enter the
+        -- throttle branch and compare those never-initialised (nil) fields -> ~775
+        -- "call expected but got table" errors/run that flood the sim log (riched20).
+        -- Setting = 1 matches M28's own default (unlimited micro) and avoids the bug.
+        M28DodgeMicro = 1,
+        M28HoverMicro = 1,
     }
 
     -- One AI bot per map army, split into two teams (4v4 on an 8-slot map,

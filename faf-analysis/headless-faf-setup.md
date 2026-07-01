@@ -76,6 +76,40 @@ The `custom-hook/lua/aibrain.lua` beat logger emits `FAF_UNITS: ticks=N total_un
 (growing = M28 building) and `FAF_M28DIAG` (per-brain `M28AI`/personality) for
 verification. Air-stress / profiler toggles in that file are off by default.
 
+## Combat-fidelity fixes (M28/projectile errors that flooded the sim log)
+
+With M28 actually playing, profiling revealed the sim was throwing ~30k+ error
+tracebacks per 45-min game. These aren't real sim cost — each error dumps a Lua
+stack trace into the engine log, which renders through `riched20.dll` **on the
+sim thread**, so it dominated (~18–29% of) perf profiles and (for the projectile
+errors) suppressed combat attrition. Three fixes, all applied here:
+
+1. **M28 DodgeShot/AltDodgeShot** (~52% of sim errors). `M28Overseer` reads
+   `(Options.M28DodgeMicro or 1)` and skips initialising the dodge-throttle brain
+   fields when it's 1; `M28Micro.DodgeShot` reads it as `== 1` **without** the nil
+   default, so a nil option enters the throttle branch and compares never-set
+   fields → "call expected but got table" per dodged shot. Fix: set
+   `Options.M28DodgeMicro = 1` (and `M28HoverMicro = 1`) in `singleplayerlaunch.lua`
+   — matches M28's own default, no mod edit.
+
+2. **Overcharge / Cybran tactical-split projectiles** (~23%). These reach
+   `Projectile:DoDamage` with `DamageData.DamageType == nil` in our mounted
+   gamedata, so the engine `Damage()`/`DamageArea()` throws and the impact deals
+   no damage. Fix: `custom-hook/lua/sim/Projectile.lua` (a schook append) wraps
+   `Projectile.DoDamage` to default a nil `DamageType` to `'Normal'`.
+
+3. **M28 `ProjectileFiredAtGunship`** (~95% of *endgame* errors — scales with air
+   combat, ~30k/game). Sums incoming projectile damage with fallback `'nil'`
+   (a string) instead of `0`, so `number + 'nil'` throws. Fix:
+   `patches/m28ai-gunship-damageamount.patch` (M28 is gitignored; apply with
+   `git apply`). NB the 25-s reload sample hid this — it only explodes in late-game
+   air battles, so always census a **full** clean run before trusting "clean".
+
+Left as documented harmless residuals: `score_mini` `LazyVar` circular-dependency
+errors (~300, **UI thread** — not in the sim-thread profile, from our score stub)
+and adjacency/veterancy buff-not-found warnings (~1.7k, **front-loaded** during
+base-building, ~24 in the endgame profile window).
+
 ## Note on the old harness
 
 `ForgedAlliance.exe` (the GTA-offload base/worker exe + `faf_profiler.dll`/`faf_worker.dll`)

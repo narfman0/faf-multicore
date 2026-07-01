@@ -1,0 +1,23 @@
+Headless-env fix for M28AI (vendored, gitignored under /M28AI).
+
+M28Events.lua:ProjectileFiredAtGunship sums incoming projectile damage but
+falls back to the STRING 'nil' when a projectile's DamageData.DamageAmount is
+unset, so `number + 'nil'` throws "perform arithmetic on ... got string". In
+late-game air battles this fires per-projectile-per-gunship and explodes to
+~30k errors/game, flooding the sim log (contaminating perf profiles) and
+disabling M28's gunship-refuel micro. Fallback should be 0, not 'nil'.
+
+Apply from repo root:  git apply patches/m28ai-gunship-damageamount.patch
+(or edit M28AI/lua/AI/M28Events.lua line ~1753 by hand)
+
+--- a/M28AI/lua/AI/M28Events.lua
++++ b/M28AI/lua/AI/M28Events.lua
+@@ -1750,7 +1750,7 @@
+         if oCurProjectile:BeenDestroyed() then
+             table.remove(oTarget[M28UnitInfo.reftoEnemyProjectiles], iCurProjectile)
+         else
+-            iTotalDamage = iTotalDamage + (oCurProjectile.DamageData.DamageAmount or 'nil')
++            iTotalDamage = iTotalDamage + (oCurProjectile.DamageData.DamageAmount or 0)
+         end
+     end
+ 

@@ -1,54 +1,48 @@
 # Test fixtures
 
 Shared, version-controlled inputs for the perf harness so tests are reproducible
-across machines without re-simulating.
+across machines without re-simulating. Loading requires the **real FAF environment**
+(`faf-analysis/headless-faf-setup.md`): FAForever `.nx2` gamedata + matching
+`ForgedAlliance_faf.exe`. A retail-gamedata launch cannot load them.
 
-## `seton4v4-30min.SCFAsave` (~198 MB)
+## `seton4v4-45min-clean.SCFAsave` (~204 MB) — current canonical fixture
 
-A headless save of a **4v4 M28AI skirmish on SCMP_009 Seton's Clutch**, captured at
-**sim tick 18000 (30 game-minutes)** on 2026-06-30, under the **real FAF environment**
-(`headless-faf-setup.md`) — i.e. M28 is **actually playing**: ~2257 units (developed
-economy + armies), not idle ACUs.
+4v4 M28AI on SCMP_009 Seton's Clutch, tick **27,000 (45 game-min)**, **~2,331 units**,
+captured **after** the combat-fidelity fixes (`headless-faf-setup.md` §"Combat-fidelity
+fixes"), so the whole game runs **error-free** (gunship/dodge/onimpact/luascript = 0).
+This is the fixture used for `faf-analysis/clean-profile.md`. At ~2.3k units it sits
+right at the 10 t/s cap (~100 ms/tick); for a CPU-bound (negative-speed) target use
+the 75-min fixture below.
 
-> **Replaces the earlier ~50 MB capture**, which was invalid — M28 never ran in the
-> old retail-gamedata setup (8 idle ACUs all game). See `faf-analysis/headless-faf-setup.md`.
-
-**Requires the FAF environment to reload** (FAForever `.nx2` gamedata + matching
-`ForgedAlliance_faf.exe`); a retail-gamedata launch can't load it. Captured at ~1×
-sim speed (this box sustains ~2200 *spread* units near real-time; the slowdown is
-combat density, not unit count).
-
-### How to use
+Reload + profile:
 
 ```sh
-# A/B the offload from this snapshot (no re-sim; identical state under both exes)
-SNAPSHOT=fixtures/seton4v4-30min.SCFAsave EXE=base   RUNS=5 bash faf-shim/bench_throughput.sh 240
-SNAPSHOT=fixtures/seton4v4-30min.SCFAsave EXE=worker RUNS=5 bash faf-shim/bench_throughput.sh 240
+SNAPSHOT=fixtures/seton4v4-45min-clean.SCFAsave SHOWLOG=0 bash faf-shim/profile_snapshot.sh 25
 ```
 
-`bench_throughput.sh` derives the in-game `Z:` path from this file with `readlink -f`,
-so loading is **portable** — it works regardless of where the repo is checked out.
+## `seton4v4-75min.SCFAsave` — CPU-bound stress fixture
 
-### Compatibility — must match to load
+Produced by reloading the 45-min fixture and running it forward 18,000 more beats
+(to tick 45,000 / 75 game-min) via the `/savecontinue` UI hook (`UserSync.lua`), so
+it captures a much denser late-game that pushes the sim CPU-bound (the -5/-6 game
+speed a real endgame hits). Recapture command:
 
-A save embeds references to the exact game build and mounted mods. To reload:
+```sh
+wine ForgedAlliance_faf.exe /init init_faf.lua /map /maps/SCMP_009/SCMP_009_scenario.lua \
+  /loadsave Z:<...>/fixtures/seton4v4-45min-clean.SCFAsave \
+  /savecontinue seton4v4-75min 18000 /ai m28ai /log Z:<...> /nobugreport /nosound /nomovie
+```
 
-- **Game version 3836** (`faf`) — the build this was captured on.
-- **M28AI mod** mounted (the repo's `init_faf.lua` mounts it for the headless run).
-- Same game data (`supcom_steam/.../gamedata`) mounted as in the capture.
+## `seton4v4-30min.SCFAsave` (~198 MB) — superseded
 
-If the game or M28AI version differs, the save may fail to load or behave oddly —
-recapture instead (below).
+Earlier real-M28 capture, but predates the combat-fidelity fixes, so it carries the
+~30k/game error tracebacks (broken Overcharge/tactical damage, M28 dodge/gunship
+micro erroring). Kept for A/B mechanics only; **prefer the clean 45-min fixture** for
+any profiling.
 
-### Recapturing (e.g. a different game-time or scenario)
+## Recapturing a fresh game-time
 
-Set `SAVE_TICK` (and `FAF_SAVE_NAME`) in `supcom_run/custom-hook/lua/aibrain.lua`,
-then run `MAP=<map> bash faf-shim/run_skirmish_profiler.sh <timeout>`. The save is
-written by the UI hook in `supcom_run/custom-hook/lua/UserSync.lua` — note its
-target path is an absolute `Z:` path that is **this-box-specific**; edit it when
-recapturing on another machine (loading does not need this).
-
-### Note on size
-
-This is a ~50 MB binary committed to git. If the fixtures set grows, consider moving
-`*.SCFAsave` to **git-LFS** to keep the main history lean.
+Set `SAVE_TICK` + `FAF_SAVE_NAME` in `supcom_run/custom-hook/lua/aibrain.lua`, launch
+`run_skirmish_*.sh`. The save is written by the UI hook in `UserSync.lua` to an
+absolute `Z:` path that is **this-box-specific** — edit it when recapturing elsewhere
+(loading is portable). `*.SCFAsave` is git-LFS tracked (`.gitattributes`).
