@@ -72,7 +72,24 @@ Steps:
 Ceiling: `PathTo`'s share (~2% now, 5–15% projected at endgame) moved off the sim core
 onto idle workers — most valuable exactly when CPU-bound (-5 speed endgames).
 
-## Cheaper parallel-free win: memoize `GetLabel`
+## DONE: `GetLabel` memoization — measured result
+
+Implemented in `supcom_run/custom-hook/lua/sim/NavUtils.lua` (schook append wrapping
+`GetLabel`, cache keyed on integer ogrids; only permanent results cached, transient
+`NotGenerated`/`SystemError` skipped). Measured on a fresh 4v4 M28 game:
+
+- **Per-call cost: ~14 µs → ~4–5 µs** (~3× measured; the ~4 µs residual is mostly
+  sethook floor, so the true tree-descent elimination is larger).
+- **Gameplay cache hit rate ~94%** (incremental; cumulative 87%+ and climbing —
+  cumulative is dragged down by M28's one-time startup map scan, which queries ~40k
+  distinct cells once and is inherently 0% cacheable).
+- No correctness issues: pathing healthy, units build/move normally, 0 errors.
+
+Cost: the cache grows to ~10^5 cells over a game (bounded by queried map area × 5
+layers), a few MB — fine. Note M28's **startup** map scan is all-misses by nature; the
+memo helps the **per-tick gameplay** queries (the ones that recur), which is the goal.
+
+## How it works (the memoization)
 
 `GetLabel(layer, pos)` is a pure function over the static terrain navmesh. Cache
 `leaf.Label` per navmesh leaf (or per unit, since a unit's region changes rarely) to
