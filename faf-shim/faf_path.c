@@ -63,7 +63,7 @@ typedef int (__cdecl *fn_reg_t)(lua_State *L);
 
 /* ── config ──────────────────────────────────────────────────────────────── */
 #define N_WORKERS 3
-#define MAX_SLOTS 64          /* power of 2 */
+#define MAX_SLOTS 128         /* power of 2 */
 #define MAX_NB    64          /* max neighbors per section */
 #define FAF_MAX_PATH  4096        /* max path length (<= nSections) */
 

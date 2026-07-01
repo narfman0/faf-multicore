@@ -147,5 +147,34 @@ ForkThread(function()
         end
     end
     LOG(string.format("FAF_PATHTEST: RESULT match=%d mismatch=%d nilhandle=%d of %d", match, mismatch, nilhandle, NQ))
+
+    -- ── throughput: sim-thread cost of N sync PathTo vs N offloaded (A* on workers) ──
+    local NT = 100
+    local T = {}
+    for q = 1, NT do
+        local pa = pts[math.mod(rnd(), np) + 1]
+        local pb = pts[math.mod(rnd(), np) + 1]
+        local o, d = { pa[1], 0, pa[2] }, { pb[1], 0, pb[2] }
+        local oS, dS = FindSection(grid, o), FindSection(grid, d)
+        T[q] = { o = o, d = d, oid = oS and oS.Identifier, did = dS and dS.Identifier }
+    end
+    PathTo('Land', T[1].o, T[1].d)  -- warm
+    -- A) synchronous on the sim thread
+    local t0 = GetSystemTimeSecondsOnlyForProfileUse()
+    for q = 1, NT do PathTo('Land', T[q].o, T[q].d) end
+    local tSync = GetSystemTimeSecondsOnlyForProfileUse() - t0
+    -- B) offload: sim thread only enqueues + polls; the A* runs on workers during the wait
+    local t1 = GetSystemTimeSecondsOnlyForProfileUse()
+    local hs = {}
+    for q = 1, NT do if T[q].oid and T[q].did then hs[q] = FAF_OffloadPath(T[q].oid, T[q].did) end end
+    local tEnq = GetSystemTimeSecondsOnlyForProfileUse() - t1
+    WaitTicks(3)
+    local t2 = GetSystemTimeSecondsOnlyForProfileUse()
+    for q = 1, NT do if hs[q] then FAF_PollPath(hs[q]) end end
+    local tPoll = GetSystemTimeSecondsOnlyForProfileUse() - t2
+    local tOff = tEnq + tPoll
+    LOG(string.format("FAF_PATHTHRU: N=%d sync=%.3fms offload_simcost=%.3fms (enq=%.3f poll=%.3f) freed=%.3fms (%.0f%%)",
+        NT, tSync * 1000, tOff * 1000, tEnq * 1000, tPoll * 1000, (tSync - tOff) * 1000,
+        tSync > 0 and (tSync - tOff) / tSync * 100 or 0))
 end)
 end
