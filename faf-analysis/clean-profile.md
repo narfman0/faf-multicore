@@ -61,11 +61,46 @@ of small functions.
 (The original *live* run hit 126–160 ms at 2.9k units in active large battles;
 reload at 2.3k sits at the cap. Consistent with combat-density-driven cost.)
 
-## Hot engine functions (names)
+## CPU-bound confirmation (spawn stress, 6k units)
 
-Pending the FAForever-exe symbol map (Ghidra headless export → `perf_symbolize.py`).
-The old `faf-fa-patches/Info.txt` is for a different build and does not match this exe.
-_TODO: fill in once `faf_faf_funcs.txt` is produced._
+The 45-min fixture sits at the 10 t/s cap (0 speed) on this 24-core box — 2.3k units
+isn't enough to go CPU-bound here (fast per-core). The natural game can't push
+further: the 4v4 M28 game **resolves by ~53 game-min** (one team wiped, `GameEnded`
+at tick ~33,340), and unit count only *declines* after the 45-min peak. So to reach
+the negative-speed regime we force it with the spawn harness (`SPAWN_AIR`, `aibrain.lua`).
+
+Gotchas found: `CreateUnitHPR` does **not** bypass `Options.UnitCap` in this build
+(over-cap units are culled — 2 armies × 500 ≈ 1k regardless of how many you spawn),
+and opposing units spawned 1 apart annihilate instantly. Use **allied** mode (same
+team, no mutual combat → sustained count) with `UnitCap` raised.
+
+Result — **6,016 sustained units (allied idle interceptors): 453 → 626 ms/tick**
+(~2.2 → 1.6 t/s, i.e. -3 to -5 game speed), error-free. DSO: 68% engine, ~19%
+render (`d3d9`+`JIT`+unknown), `riched20` = 0.
+
+**The distributed shape holds under CPU-bound load.** Hottest single function =
+**1.80%** (`0x52941c` — the *same* top address as the 45-min mixed-army profile),
+top-30 = 17.2% of samples. No hotspot emerges at -5 speed. The cost is per-unit
+update work smeared across hundreds of functions, whether the units are a real
+mixed army (45-min) or 6k idle interceptors.
+
+## Hot engine functions (from disassembly)
+
+Ghidra headless never completed on this 8.5 MB-code exe (decompiler wouldn't honor
+the analysis timeout). Disassembling the top hot addresses directly (VA = 0x400000 +
+perf offset) shows they are **generic low-level primitives**, not a subsystem:
+
+- `0x527461` (#2, ~1.3%): bounds-checked **array element accessor** —
+  `cmp size@[esi+0x20]; mov base@[esi+0x10]; lea base+idx*8` (8-byte elements).
+- `0x52941c` (#1, ~1.8%): a small **collection-iteration** loop invoking a
+  per-element callback (`call 0x929bf0`) under a condition check.
+- `0x6a84d8`: a **float-math helper** (NaN/inf classify via `and 0x7ff0`, `fldcw`).
+
+That the hot functions are container indexing / iteration / float math — called by
+every per-unit update path — is *why* the profile is flat. There is no high-level
+subsystem to offload; the cost is in the primitives underlying all per-unit work.
+A denser symbol map (were Ghidra to finish) would name the mid-tail callers, but the
+conclusion doesn't depend on it.
 
 ## Artifacts
 

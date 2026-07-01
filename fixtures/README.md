@@ -20,18 +20,20 @@ Reload + profile:
 SNAPSHOT=fixtures/seton4v4-45min-clean.SCFAsave SHOWLOG=0 bash faf-shim/profile_snapshot.sh 25
 ```
 
-## `seton4v4-75min.SCFAsave` — CPU-bound stress fixture
+## Reaching the CPU-bound (negative-speed) regime
 
-Produced by reloading the 45-min fixture and running it forward 18,000 more beats
-(to tick 45,000 / 75 game-min) via the `/savecontinue` UI hook (`UserSync.lua`), so
-it captures a much denser late-game that pushes the sim CPU-bound (the -5/-6 game
-speed a real endgame hits). Recapture command:
+There is **no 75-min fixture**: the 4v4 M28 game **resolves by ~53 game-min** (one
+team wiped, `GameEnded` at tick ~33,340), and unit count only declines after the
+45-min peak. On a fast box 2.3k units also just sits at the 10 t/s cap. To profile
+the CPU-bound regime, force it with the **spawn harness** instead of a longer game —
+see `faf-analysis/clean-profile.md` §"CPU-bound confirmation": set `SPAWN_AIR=true`,
+`SPAWN_MODE="allied"`, `SPAWN_N=6000` in `aibrain.lua` and raise `Options.UnitCap`
+in `singleplayerlaunch.lua` (CreateUnitHPR does NOT bypass the cap). 6k sustained
+units → ~450–630 ms/tick (-3 to -5 speed).
 
-```sh
-wine ForgedAlliance_faf.exe /init init_faf.lua /map /maps/SCMP_009/SCMP_009_scenario.lua \
-  /loadsave Z:<...>/fixtures/seton4v4-45min-clean.SCFAsave \
-  /savecontinue seton4v4-75min 18000 /ai m28ai /log Z:<...> /nobugreport /nosound /nomovie
-```
+The `/savecontinue <name> <beats>` UI hook (`UserSync.lua`) still works to extend a
+snapshot to any *reachable* tick (e.g. capture at 50-min before the game resolves) —
+reload it and it saves once after N more beats under a new name.
 
 ## `seton4v4-30min.SCFAsave` (~198 MB) — superseded
 
