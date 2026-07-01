@@ -26,6 +26,9 @@ def main():
         sys.exit(1)
 
     exe_path = sys.argv[1]
+    # optional: DLL name + init symbol (defaults preserve old faf_profiler behaviour)
+    dll    = sys.argv[2] if len(sys.argv) > 2 else "faf_profiler.dll"
+    symbol = sys.argv[3] if len(sys.argv) > 3 else "faf_profiler_init"
     out_path = exe_path.replace(".exe", "_patched.exe")
 
     print(f"Parsing {exe_path} ...")
@@ -36,14 +39,14 @@ def main():
 
     # Check if already patched
     for imp in pe.imports:
-        if imp.name.lower() == "faf_profiler.dll":
-            print("Already patched — faf_profiler.dll already imported")
+        if imp.name.lower() == dll.lower():
+            print(f"Already patched — {dll} already imported")
             sys.exit(0)
 
     # Add new import (lief 0.15+ API)
-    print("Adding import: faf_profiler.dll -> faf_profiler_init")
-    library = pe.add_import("faf_profiler.dll")
-    library.add_entry(lief.PE.ImportEntry("faf_profiler_init"))
+    print(f"Adding import: {dll} -> {symbol}")
+    library = pe.add_import(dll)
+    library.add_entry(lief.PE.ImportEntry(symbol))
 
     # Build and write
     cfg = lief.PE.Builder.config_t()

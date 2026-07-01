@@ -29,7 +29,11 @@ typedef struct lua_State lua_State;
 typedef int (*lua_CFunction)(lua_State *L);
 #define LUA_GLOBALSINDEX  ((int)0xffffd8ef)
 
-#define GTA_VA                0x00590260u  /* GetThreatAtPosition — hooked only to grab L */
+/* Hook a Lua C binding purely to obtain a lua_State on first call, then register.
+ * CanBuildStructureAt (0x58b3a0) is called thousands of times from the first base-
+ * building tick, so it registers far earlier than GTA (which waits for armies).
+ * Both are identical thin stubs: mov L; push ebx; mov L+0x44; call real (8-byte boundary). */
+#define REG_HOOK_VA           0x0058b3a0u  /* CanBuildStructureAt */
 #define VA_lua_gettop         0x90c590u
 #define VA_luaL_error         0x90c1d0u
 #define VA_lua_type           0x90c740u
@@ -47,7 +51,7 @@ typedef void   (__cdecl *fn_luaL_error_t)      (lua_State*, const char*, ...);
 typedef int    (__cdecl *fn_lua_type_t)        (lua_State*, int);
 typedef double (__cdecl *fn_lua_tonumber_t)    (lua_State*, int);  /* DOUBLE — precision matters */
 typedef void   (__cdecl *fn_lua_pushnil_t)     (lua_State*);
-typedef void   (__cdecl *fn_lua_pushnumber_t)  (lua_State*, double);
+typedef void   (__cdecl *fn_lua_pushnumber_t)  (lua_State*, float);   /* lua_Number = float here */
 typedef void   (__cdecl *fn_lua_pushcclosure_t)(lua_State*, lua_CFunction, int);
 typedef void   (__cdecl *fn_lua_newtable_t)    (lua_State*);
 typedef void   (__cdecl *fn_lua_rawseti_t)     (lua_State*, int, int);
@@ -55,7 +59,7 @@ typedef void   (__cdecl *fn_lua_rawset_t)      (lua_State*, int);
 typedef void   (__cdecl *fn_lua_pushstring_t)  (lua_State*, const char*);
 #define LUA(fn, ...) ((fn_##fn##_t)VA_##fn)(__VA_ARGS__)
 
-typedef int (__cdecl *fn_gta_t)(lua_State *L);
+typedef int (__cdecl *fn_reg_t)(lua_State *L);
 
 /* ── config ──────────────────────────────────────────────────────────────── */
 #define N_WORKERS 3
@@ -226,6 +230,10 @@ static int lua_FAF_PathSection(lua_State *L) {
         cnt++;
     }
     g_nbCount[id] = cnt;
+    if ((id == 1 || id == 34 || id == 142) && g_log) {   /* precision check vs spike export */
+        fprintf(g_log, "SEC %d cx=%.17g cz=%.17g label=%d nb=%d\n", id, cx, cz, label, cnt);
+        fflush(g_log);
+    }
     return 0;
 }
 
@@ -321,26 +329,33 @@ static DWORD WINAPI worker_thread(LPVOID arg) {
 }
 
 /* ── GTA hook (grab L on first call, register, then chain) ───────────────── */
-static BYTE *g_gta_tramp = NULL;
+static BYTE *g_reg_tramp = NULL;
 
-static BYTE* make_inline_hook(void *src, void *dst) {
+/* Steal n>=6 bytes (must end on an instruction boundary): patch = push imm32; ret (6)
+ * + NOP pad to n; trampoline = n original bytes + JMP rel32 -> src+n. */
+static BYTE* make_inline_hook_n(void *src, void *dst, int n) {
+    if (n < 6 || n > 16) return NULL;
     BYTE *tramp = (BYTE*)VirtualAlloc(NULL, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     if (!tramp) return NULL;
     DWORD old;
-    if (!VirtualProtect(src, 6, PAGE_EXECUTE_READWRITE, &old)) { VirtualFree(tramp, 0, MEM_RELEASE); return NULL; }
-    memcpy(tramp, src, 6);
-    BYTE *jf = tramp + 6 + 5; BYTE *jt = (BYTE*)src + 6;
+    if (!VirtualProtect(src, n, PAGE_EXECUTE_READWRITE, &old)) { VirtualFree(tramp, 0, MEM_RELEASE); return NULL; }
+    memcpy(tramp, src, n);
+    BYTE *jf = tramp + n + 5; BYTE *jt = (BYTE*)src + n;
     INT32 rel = (INT32)(jt - jf);
-    tramp[6] = 0xE9; memcpy(tramp + 7, &rel, 4);
-    BYTE patch[6]; patch[0] = 0x68; *(DWORD*)(patch + 1) = (DWORD)(uintptr_t)dst; patch[5] = 0xC3;
-    memcpy(src, patch, 6);
-    VirtualProtect(src, 6, old, &old);
+    tramp[n] = 0xE9; memcpy(tramp + n + 1, &rel, 4);
+    BYTE patch[16]; patch[0] = 0x68; *(DWORD*)(patch + 1) = (DWORD)(uintptr_t)dst; patch[5] = 0xC3;
+    for (int i = 6; i < n; i++) patch[i] = 0x90;
+    memcpy(src, patch, n);
+    VirtualProtect(src, n, old, &old);
     return tramp;
 }
 
-static int __cdecl hook_gta(lua_State *L) {
+static volatile LONG g_hookfires = 0;
+static int __cdecl hook_reg(lua_State *L) {
+    LONG n = InterlockedIncrement(&g_hookfires);
+    if (n <= 3 && g_log) { fprintf(g_log, "hook_reg fired #%ld L=%p\n", n, (void*)L); fflush(g_log); }
     if (InterlockedCompareExchange(&g_registered, 1, 0) == 0) register_lua(L);
-    return ((fn_gta_t)g_gta_tramp)(L);
+    return ((fn_reg_t)g_reg_tramp)(L);
 }
 
 /* ── DllMain ─────────────────────────────────────────────────────────────── */
@@ -354,8 +369,13 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID reserved) {
         g_work_event = CreateEvent(NULL, FALSE, FALSE, NULL);
         for (int i = 0; i < N_WORKERS; i++)
             g_workers[i] = CreateThread(NULL, 0, worker_thread, (LPVOID)(intptr_t)i, 0, NULL);
-        g_gta_tramp = make_inline_hook((void*)(uintptr_t)GTA_VA, (void*)hook_gta);
-        if (g_log) { fprintf(g_log, "hook installed=%p, %d workers\n", (void*)g_gta_tramp, N_WORKERS); fflush(g_log); }
+        g_reg_tramp = make_inline_hook_n((void*)(uintptr_t)REG_HOOK_VA, (void*)hook_reg, 8);
+        if (g_log) {
+            BYTE *p = (BYTE*)(uintptr_t)REG_HOOK_VA;   /* read back to confirm the patch applied */
+            fprintf(g_log, "hook installed=%p, %d workers; hook bytes now: %02x %02x %02x %02x %02x %02x\n",
+                    (void*)g_reg_tramp, N_WORKERS, p[0], p[1], p[2], p[3], p[4], p[5]);
+            fflush(g_log);
+        }
     } else if (reason == DLL_PROCESS_DETACH) {
         InterlockedExchange(&g_shutdown, 1);
     }
