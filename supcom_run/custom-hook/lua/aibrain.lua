@@ -356,9 +356,63 @@ function FafTimeCBSA()
     end
 end
 
+-- Time M28's pathfinding (NavUtils Lua + engine CanPathTo builtin) via debug.sethook,
+-- sampled in short windows as the game develops. Pathfinding is the leading
+-- category-B (AI-advisory, offloadable) candidate — this measures its tick share so
+-- we know whether a worker-thread offload is worth building (see parallelization-strategy.md).
+local FAF_PATH_NAMES = {
+    CanPathTo = true, CanPathToCell = true,        -- engine C builtins (hookable like GTA)
+    PathTo = true, DetailedPathTo = true,          -- NavUtils full path generation
+    PathToWithThreatThreshold = true,
+    GetLabel = true, GetTerrainLabel = true,       -- NavUtils region/connectivity lookups
+    DirectionsFrom = true, GetPositionsInRadius = true,
+}
+function FafTimePathfinding()
+    local okd, dbg = pcall(function() return debug end)
+    if not (okd and dbg and dbg.sethook and dbg.getinfo) then
+        LOG("FAF_PATH: debug.sethook unavailable"); return
+    end
+    local getinfo = dbg.getinfo
+    while true do
+        WaitTicks(1200)                            -- every ~2 game-min
+        local starts, totals, counts = {}, {}, {}
+        local hook = function(event)
+            local info = getinfo(2, "n")
+            local nm = info and info.name
+            if nm and FAF_PATH_NAMES[nm] then
+                if event == "call" then
+                    starts[nm] = GetSystemTimeSecondsOnlyForProfileUse()
+                elseif event == "return" and starts[nm] then
+                    totals[nm] = (totals[nm] or 0) + (GetSystemTimeSecondsOnlyForProfileUse() - starts[nm])
+                    counts[nm] = (counts[nm] or 0) + 1; starts[nm] = nil
+                end
+            end
+        end
+        dbg.sethook(hook, "cr")
+        WaitTicks(40)                               -- measurement window
+        dbg.sethook()
+        local okg, gt = pcall(GetGameTimeSeconds)
+        local units = FafTotalUnits()
+        local grandTotal, grandCount = 0, 0
+        for nm, _ in FAF_PATH_NAMES do
+            local c = counts[nm] or 0
+            if c > 0 then
+                local t = totals[nm] or 0
+                grandTotal = grandTotal + t; grandCount = grandCount + c
+                LOG(string.format("FAF_PATH: gt=%s units=%d fn=%s calls=%d calls/tick=%.1f avg_us=%.2f pct=%.4f",
+                    tostring(okg and gt or "?"), units, nm, c, c/40, t/c*1e6, (t/40*1e6)/100000*100))
+            end
+        end
+        LOG(string.format("FAF_PATH: gt=%s units=%d TOTAL calls=%d calls/tick=%.1f us/tick=%.1f pct_of_tick=%.3f",
+            tostring(okg and gt or "?"), units, grandCount, grandCount/40, grandTotal/40*1e6,
+            (grandTotal/40*1e6)/100000*100))
+    end
+end
+
 local PROFILE_SELFHOOK = false   -- our debug.sethook profiler
 local PROFILE_M28 = false        -- M28's wall-time profiler (output thread won't run headless)
 local PROFILE_CBSA = false       -- time CanBuildStructureAt as the game develops
+local PROFILE_PATH = false       -- time M28 pathfinding (NavUtils + CanPathTo)
 -- Diagnose why M28 doesn't activate: per brain, log the name, the personality
 -- ScenarioInfo.ArmySetup reports, the M28AI flag, and IsM28AIPersonality's verdict.
 function FafM28Diag()
@@ -386,6 +440,7 @@ end
 ForkThread(FafM28Diag)
 
 if PROFILE_CBSA then ForkThread(FafTimeCBSA) end
+if PROFILE_PATH then ForkThread(FafTimePathfinding) end
 if SPAWN_AIR then
     ForkThread(FafSpawnAirBattle)
     if PROFILE_SELFHOOK then ForkThread(FafEnableProfiler) end
